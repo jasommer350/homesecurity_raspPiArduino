@@ -1,0 +1,97 @@
+#!/opt/node/bin node
+//var debug = require('debug')('iHomeSecurity');
+var app = require('../app');
+var com = require("serialport"), 
+serialPort = new com.SerialPort("/dev/ttyACM0", {baudrate: 9600, parser: com.parsers.readline('\r\n')});
+
+var Pushover = require('node-pushover');
+
+var push = new Pushover({
+    token: "PushoverToken",
+    user: "PushoverUserToken"
+});
+
+var motionCounter = {
+    mcount: 0,
+    mcountLimit: 15,
+    steps: 5
+};
+app.set('port', process.env.PORT || 3000);
+
+serialPort.on("open", function() {
+  //turns on motion detector
+  var msg = new Buffer('n');
+  serialPort.write(msg);//, function(e) {
+    //serialPort.drain(function(e) {
+        //console.log('Drained');
+    //});
+  //});
+  
+  var server = app.listen(app.get('port'), function() {
+      //Ties the connected serialPort object to a property that I can access later.
+        app.locals.serialPortObj = serialPort;
+        app.locals.systemStatus = 'n';
+        
+        app.on('event:reset_MotionCounter', function() {
+            motionCounter.mcount = 0;
+            //console.log('Count updated ' + motionCounter.mcount);
+        });
+    //debug('Express server listening on port ' + server.address().port);
+  });
+  
+  // Default kill signal
+    process.on('SIGTERM', function() {
+      // Close the server
+      server.close();
+      
+      var msg = new Buffer('y');
+      serialPort.write(msg, function() {
+        serialPort.drain(function(e) {
+            console.log('Drained');
+        });
+      });
+      // Log the event
+      console.log('Terminated at ' + Date.now());
+      process.exit();
+    });
+
+    // CTRL+c
+    process.on('SIGINT', function() {
+      // Close the server
+      server.close();
+      
+      var msg = new Buffer('y');
+      serialPort.write(msg, function() {
+        serialPort.drain(function(e) {
+            console.log('Drained');
+        });
+      });
+      
+      // Log event
+      console.log('Terminated at ' + Date.now());
+      process.exit();
+    });
+  
+});
+serialPort.on('data', function(data) {
+    var dataRec = data,
+      currenttime = new Date(),
+      strTime = currenttime.toDateString() + ' ' + currenttime.toLocaleTimeString();
+    if(motionCounter.mcount <= motionCounter.mcountLimit && (motionCounter.mcount === 0 || motionCounter.mcount % motionCounter.steps === 0)) {
+        push.send("iHome Security", dataRec + ' at ' + strTime, function (err, res){
+            if(err){
+                console.log("We have an error:");
+                console.log(err);
+                console.log(err.stack);
+            }else{
+                console.log("Message send successfully");
+                console.log(res);
+            }
+        });
+    }
+    motionCounter.mcount++;
+});
+serialPort.on('error', function(e) {
+  console.log('Found error:');
+  console.log(e);
+});
